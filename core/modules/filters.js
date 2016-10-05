@@ -13,8 +13,8 @@ Adds tiddler filtering methods to the $tw.Wiki object.
 "use strict";
 
 /*
-Parses an operation within a filter string
-	results: Array of array of operator nodes into which results should be inserted
+Parses an operation (i.e. a run) within a filter string
+	operators: Array of array of operator nodes into which results should be inserted
 	filterString: filter string
 	p: start position within the string
 Returns the new start position, after the parsed operation
@@ -108,7 +108,7 @@ exports.parseFilter = function(filterString) {
 		p = 0, // Current position in the filter string
 		match;
 	var whitespaceRegExp = /(\s+)/mg,
-		operandRegExp = /((?:\+|\-)?)(?:(\[)|("(?:[^"])*")|('(?:[^'])*')|([^\s\[\]]+))/mg;
+		operandRegExp = /((?:\+|\-)?)(?:(\[)|(?:"([^"]*)")|(?:'([^']*)')|([^\s\[\]]+))/mg;
 	while(p < filterString.length) {
 		// Skip any whitespace
 		whitespaceRegExp.lastIndex = p;
@@ -121,7 +121,7 @@ exports.parseFilter = function(filterString) {
 			operandRegExp.lastIndex = p;
 			match = operandRegExp.exec(filterString);
 			if(!match || match.index !== p) {
-				throw "Syntax error in filter expression";
+				throw $tw.language.getString("Error/FilterSyntax");
 			}
 			var operation = {
 				prefix: "",
@@ -171,7 +171,7 @@ exports.compileFilter = function(filterString) {
 		filterParseTree = this.parseFilter(filterString);
 	} catch(e) {
 		return function(source,widget) {
-			return ["Filter error: " + e];
+			return [$tw.language.getString("Error/Filter") + ": " + e];
 		};
 	}
 	// Get the hashmap of filter operator functions
@@ -202,6 +202,7 @@ exports.compileFilter = function(filterString) {
 				if(operator.variable) {
 					operand = widget.getVariable(operator.operand,{defaultValue: ""});
 				}
+				// Invoke the appropriate filteroperator module
 				results = operatorFunction(accumulator,{
 							operator: operator.operator,
 							operand: operand,

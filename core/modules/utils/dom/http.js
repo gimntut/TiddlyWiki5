@@ -39,13 +39,13 @@ exports.httpRequest = function(options) {
 	// Set up the state change handler
 	request.onreadystatechange = function() {
 		if(this.readyState === 4) {
-			if(this.status === 200 || this.status === 204) {
+			if(this.status === 200 || this.status === 201 || this.status === 204) {
 				// Success!
 				options.callback(null,this.responseText,this);
 				return;
 			}
 		// Something went wrong
-		options.callback("XMLHttpRequest error code: " + this.status);
+		options.callback($tw.language.getString("Error/XMLHttpRequest") + ": " + this.status);
 		}
 	};
 	// Make the request
@@ -58,7 +58,11 @@ exports.httpRequest = function(options) {
 	if(data && !$tw.utils.hop(headers,"Content-type")) {
 		request.setRequestHeader("Content-type","application/x-www-form-urlencoded; charset=UTF-8");
 	}
-	request.send(data);
+	try {
+		request.send(data);
+	} catch(e) {
+		options.callback(e);
+	}
 	return request;
 };
 

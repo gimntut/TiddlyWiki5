@@ -4,20 +4,7 @@ type: application/javascript
 
 The main boot kernel for TiddlyWiki. This single file creates a barebones TW environment that is just sufficient to bootstrap the modules containing the main logic of the application.
 
-On the server this file is executed directly to boot TiddlyWiki. In the browser, this file is packed into a single HTML file along with other elements:
-
-# bootprefix.js
-# <module definitions>
-# boot.js
-
-The module definitions on the browser look like this:
-
-	$tw.defineModule("MyModule","moduletype",function(module,exports,require) {
-	// Module code inserted here
-	return exports;
-	});
-
-In practice, each module is wrapped in a separate script block.
+On the server this file is executed directly to boot TiddlyWiki. In the browser, this file is packed into a single HTML file.
 
 \*/
 
@@ -75,14 +62,22 @@ $tw.utils.isDate = function(value) {
 Iterate through all the own properties of an object or array. Callback is invoked with (element,title,object)
 */
 $tw.utils.each = function(object,callback) {
-	var f;
+	var next,f,length;
 	if(object) {
 		if(Object.prototype.toString.call(object) == "[object Array]") {
-			object.forEach(callback);
+			for (f=0, length=object.length; f<length; f++) {
+				next = callback(object[f],f,object);
+				if(next === false) {
+					break;
+				}
+		    }
 		} else {
-			for(f in object) {
-				if(Object.prototype.hasOwnProperty.call(object,f)) {
-					callback(object[f],f,object);
+			var keys = Object.keys(object);
+			for (f=0, length=keys.length; f<length; f++) {
+				var key = keys[f];
+				next = callback(object[key],key,object);
+				if(next === false) {
+					break;
 				}
 			}
 		}
@@ -131,17 +126,17 @@ Display an error and exit
 */
 $tw.utils.error = function(err) {
 	// Prepare the error message
-	var errHeading = "Internal JavaScript Error",
-		promptMsg = "Well, this is embarrassing. It is recommended that you restart TiddlyWiki by refreshing your browser";
+	var errHeading = ( $tw.language == undefined ? "Internal JavaScript Error" : $tw.language.getString("InternalJavaScriptError/Title") ),
+		promptMsg = ( $tw.language == undefined ? "Well, this is embarrassing. It is recommended that you restart TiddlyWiki by refreshing your browser" : $tw.language.getString("InternalJavaScriptError/Hint") );
 	// Log the error to the console
-	console.error(err);
+	console.error($tw.node ? "\x1b[1;31m" + err + "\x1b[0m" : err);
 	if($tw.browser && !$tw.node) {
 		// Display an error message to the user
 		var dm = $tw.utils.domMaker,
 			heading = dm("h1",{text: errHeading}),
 			prompt = dm("div",{text: promptMsg, "class": "tc-error-prompt"}),
 			message = dm("div",{text: err}),
-			button = dm("button",{text: "close"}),
+			button = dm("button",{text: ( $tw.language == undefined ? "close" : $tw.language.getString("Buttons/Close/Caption") )}),
 			form = dm("form",{children: [heading,prompt,message,button], "class": "tc-error-form"});
 		document.body.insertBefore(form,document.body.firstChild);
 		form.addEventListener("submit",function(event) {
@@ -256,15 +251,20 @@ $tw.utils.parseDate = function(value) {
 
 // Stringify an array of tiddler titles into a list string
 $tw.utils.stringifyList = function(value) {
-	var result = [];
-	for(var t=0; t<value.length; t++) {
-		if(value[t].indexOf(" ") !== -1) {
-			result.push("[[" + value[t] + "]]");
-		} else {
-			result.push(value[t]);
+	if($tw.utils.isArray(value)) {
+		var result = [];
+		for(var t=0; t<value.length; t++) {
+			var entry = value[t] || "";
+			if(entry.indexOf(" ") !== -1) {
+				result.push("[[" + entry + "]]");
+			} else {
+				result.push(entry);
+			}
 		}
+		return result.join(" ");
+	} else {
+		return value || "";
 	}
-	return result.join(" ");
 };
 
 // Parse a string array from a bracketted list. For example "OneTiddler [[Another Tiddler]] LastOne"
@@ -299,7 +299,9 @@ $tw.utils.parseFields = function(text,fields) {
 			if(p !== -1) {
 				var field = line.substr(0, p).trim(),
 					value = line.substr(p+1).trim();
-				fields[field] = value;
+				if(field) {
+					fields[field] = value;
+				}
 			}
 		}
 	});
@@ -367,21 +369,20 @@ Returns true if the version string A is greater than the version string B. Retur
 */
 $tw.utils.checkVersions = function(versionStringA,versionStringB) {
 	var defaultVersion = {
-			major: 0,
-			minor: 0,
-			patch: 0
-		},
-		versionA = $tw.utils.parseVersion(versionStringA) || defaultVersion,
-		versionB = $tw.utils.parseVersion(versionStringB) || defaultVersion,
-		diff = [
-			versionA.major - versionB.major,
-			versionA.minor - versionB.minor,
-			versionA.patch - versionB.patch
-		];
+		major: 0,
+		minor: 0,
+		patch: 0
+	},
+	versionA = $tw.utils.parseVersion(versionStringA) || defaultVersion,
+	versionB = $tw.utils.parseVersion(versionStringB) || defaultVersion,
+	diff = [
+		versionA.major - versionB.major,
+		versionA.minor - versionB.minor,
+		versionA.patch - versionB.patch
+	];
 	return (diff[0] > 0) ||
 		(diff[0] === 0 && diff[1] > 0) ||
-		(diff[0] === 0 && diff[1] === 0 && diff[2] > 0) ||
-		(diff[0] === 0 && diff[1] === 0 && diff[2] === 0);
+		(diff[0] === 0 && diff[1] === 0 && diff[2] >= 0);
 };
 
 /*
@@ -404,11 +405,19 @@ $tw.utils.registerFileType = function(type,encoding,extension,options) {
 };
 
 /*
+Given an extension, always access the $tw.config.fileExtensionInfo
+using a lowercase extension only.
+*/
+$tw.utils.getFileExtensionInfo = function(ext) {
+	return ext ? $tw.config.fileExtensionInfo[ext.toLowerCase()] : null;
+}
+
+/*
 Given an extension, get the correct encoding for that file.
 defaults to utf8
 */
 $tw.utils.getTypeEncoding = function(ext) {
-	var extensionInfo = $tw.config.fileExtensionInfo[ext],
+	var extensionInfo = $tw.utils.getFileExtensionInfo(ext),
 		type = extensionInfo ? extensionInfo.type : null,
 		typeInfo = type ? $tw.config.contentTypeInfo[type] : null;
 	return typeInfo ? typeInfo.encoding : "utf8";
@@ -426,7 +435,7 @@ $tw.utils.evalGlobal = function(code,context,filename) {
 		contextValues.push(value);
 	});
 	// Add the code prologue and epilogue
-	code = "(function(" + contextNames.join(",") + ") {(function(){\n" + code + ";})();\nreturn exports;\n})\n";
+	code = "(function(" + contextNames.join(",") + ") {(function(){\n" + code + "\n;})();\nreturn exports;\n})\n";
 	// Compile the code into a function
 	var fn;
 	if($tw.browser) {
@@ -477,6 +486,7 @@ submitText: text to use for submit button (defaults to "Login")
 serviceName: text of the human readable service name
 noUserName: set true to disable username prompt
 canCancel: set true to enable a cancel button (callback called with null)
+repeatPassword: set true to prompt for the password twice
 callback: function to be called on submission with parameter of object {username:,password:}. Callback must return `true` to remove the password prompt
 */
 $tw.utils.PasswordPrompt.prototype.createPrompt = function(options) {
@@ -487,15 +497,31 @@ $tw.utils.PasswordPrompt.prototype.createPrompt = function(options) {
 		children = [dm("h1",{text: options.serviceName})];
 	if(!options.noUserName) {
 		children.push(dm("input",{
-			attributes: {type: "text", name: "username", placeholder: "Username"}
+			attributes: {type: "text", name: "username", placeholder: $tw.language.getString("Encryption/Username")}
 		}));
 	}
 	children.push(dm("input",{
-		attributes: {type: "password", name: "password", placeholder: "Password"}
+		attributes: {
+			type: "password",
+			name: "password",
+			placeholder: ( $tw.language == undefined ? "Password" : $tw.language.getString("Encryption/Password") )
+		}
 	}));
+	if(options.repeatPassword) {
+		children.push(dm("input",{
+			attributes: {
+				type: "password",
+				name: "password2",
+				placeholder: $tw.language.getString("Encryption/RepeatPassword")
+			}
+		}));
+	}
 	if(options.canCancel) {
 		children.push(dm("button",{
-			text: "Cancel",
+			text: $tw.language.getString("Encryption/Cancel"),
+			attributes: {
+				type: "button"
+			},
 			eventListeners: [{
 					name: "click",
 					handlerFunction: function(event) {
@@ -527,17 +553,22 @@ $tw.utils.PasswordPrompt.prototype.createPrompt = function(options) {
 				data[element.name] = element.value;
 			}
 		});
-		// Call the callback
-		if(options.callback(data)) {
-			// Remove the prompt if the callback returned true
-			self.removePrompt(promptInfo);
+		// Check that the passwords match
+		if(options.repeatPassword && data.password !== data.password2) {
+			alert($tw.language.getString("Encryption/PasswordNoMatch"));
 		} else {
-			// Clear the password if the callback returned false
-			$tw.utils.each(form.elements,function(element) {
-				if(element.name === "password") {
-					element.value = "";
-				}
-			});
+			// Call the callback
+			if(options.callback(data)) {
+				// Remove the prompt if the callback returned true
+				self.removePrompt(promptInfo);
+			} else {
+				// Clear the password if the callback returned false
+				$tw.utils.each(form.elements,function(element) {
+					if(element.name === "password" || element.name === "password2") {
+						element.value = "";
+					}
+				});
+			}
 		}
 		event.preventDefault();
 		return false;
@@ -567,7 +598,7 @@ Crypto helper object for encrypted content. It maintains the password text in a 
 the password, and to encrypt/decrypt a block of text
 */
 $tw.utils.Crypto = function() {
-	var sjcl = $tw.node ? require("./sjcl.js") : window.sjcl,
+	var sjcl = $tw.node ? (global.sjcl || require("./sjcl.js")) : window.sjcl,
 		currentPassword = null,
 		callSjcl = function(method,inputText,password) {
 			password = password || currentPassword;
@@ -625,7 +656,7 @@ $tw.modules.execute = function(moduleName,moduleRoot) {
 			clearInterval: clearInterval,
 			setTimeout: setTimeout,
 			clearTimeout: clearTimeout,
-			Buffer: $tw.browser ? {} : Buffer,
+			Buffer: $tw.browser ? undefined : Buffer,
 			$tw: $tw,
 			require: function(title) {
 				return $tw.modules.execute(title, name);
@@ -689,7 +720,24 @@ $tw.modules.execute = function(moduleName,moduleRoot) {
 				moduleInfo.exports = moduleInfo.definition;
 			}
 		} catch(e) {
-			$tw.utils.error("Error executing boot module " + name + ":\n" + e);
+			if (e instanceof SyntaxError) {
+				var line = e.lineNumber || e.line; // Firefox || Safari
+				if (typeof(line) != "undefined" && line !== null) {
+					$tw.utils.error("Syntax error in boot module " + name + ":" + line + ":\n" + e.stack);
+				} else if(!$tw.browser) {
+					// this is the only way to get node.js to display the line at which the syntax error appeared,
+					// and $tw.utils.error would exit anyway
+					// cf. https://bugs.chromium.org/p/v8/issues/detail?id=2589
+					throw e;
+				} else {
+					// Opera: line number is included in e.message
+					// Chrome/IE: there's currently no way to get the line number
+					$tw.utils.error("Syntax error in boot module " + name + ": " + e.message + "\n" + e.stack);
+				}
+			} else {
+				// line number should be included in e.stack for runtime errors
+				$tw.utils.error("Error executing boot module " + name + ": " + JSON.stringify(e) + "\n\n" + e.stack);
+			}
 		}
 	}
 	// Return the exports of the module
@@ -780,7 +828,7 @@ $tw.Tiddler = function(/* [fields,] fields */) {
 					value = src[t];
 				}
 				// Freeze the field to keep it immutable
-				if(typeof value === "object") {
+				if(value != null && typeof value === "object") {
 					Object.freeze(value);
 				}
 				this.fields[t] = value;
@@ -789,6 +837,7 @@ $tw.Tiddler = function(/* [fields,] fields */) {
 	}
 	// Freeze the tiddler against modification
 	Object.freeze(this.fields);
+	Object.freeze(this);
 };
 
 $tw.Tiddler.prototype.hasField = function(field) {
@@ -848,6 +897,8 @@ $tw.Wiki = function(options) {
 		if(tiddler) {
 			var title = tiddler.fields.title;
 			if(title) {
+// Uncomment the following line for detailed logs of all tiddler writes
+// console.log("Adding",title,tiddler)
 				tiddlers[title] = tiddler;
 				this.clearCache(title);
 				this.clearGlobalCache();
@@ -858,20 +909,25 @@ $tw.Wiki = function(options) {
 
 	// Delete a tiddler
 	this.deleteTiddler = function(title) {
-		delete tiddlers[title];
-		this.clearCache(title);
-		this.clearGlobalCache();
-		this.enqueueTiddlerEvent(title,true);
+// Uncomment the following line for detailed logs of all tiddler deletions
+// console.log("Deleting",title,tiddler)
+		if($tw.utils.hop(tiddlers,title)) {
+			delete tiddlers[title];
+			this.clearCache(title);
+			this.clearGlobalCache();
+			this.enqueueTiddlerEvent(title,true);
+		}
 	};
 
 	// Get a tiddler from the store
 	this.getTiddler = function(title) {
-		var t = tiddlers[title];
-		if(t instanceof $tw.Tiddler) {
-			return t;
-		} else if(title !== undefined && Object.prototype.hasOwnProperty.call(shadowTiddlers,title)) {
-			return shadowTiddlers[title].tiddler;
-		} else {
+		if(title) {
+			var t = tiddlers[title];
+			if(t instanceof $tw.Tiddler) {
+				return t;
+			} else if(title !== undefined && Object.prototype.hasOwnProperty.call(shadowTiddlers,title)) {
+				return shadowTiddlers[title].tiddler;
+			}
 			return undefined;
 		}
 	};
@@ -883,7 +939,10 @@ $tw.Wiki = function(options) {
 
 	// Iterate through all tiddler titles
 	this.each = function(callback) {
-		for(var title in tiddlers) {
+		var titles = Object.keys(tiddlers),
+			index,titlesLength,title;
+		for(index = 0, titlesLength = titles.length; index < titlesLength; index++) {
+			title = titles[index];
 			callback(tiddlers[title],title);
 		}
 	};
@@ -895,7 +954,10 @@ $tw.Wiki = function(options) {
 
 	// Iterate through all shadow tiddler titles
 	this.eachShadow = function(callback) {
-		for(var title in shadowTiddlers) {
+		var titles = Object.keys(shadowTiddlers),
+			index,titlesLength,title;
+		for(index = 0, titlesLength = titles.length; index < titlesLength; index++) {
+			title = titles[index];
 			var shadowInfo = shadowTiddlers[title];
 			callback(shadowInfo.tiddler,title);
 		}
@@ -903,10 +965,15 @@ $tw.Wiki = function(options) {
 
 	// Iterate through all tiddlers and then the shadows
 	this.eachTiddlerPlusShadows = function(callback) {
-		for(var title in tiddlers) {
+		var titles = Object.keys(tiddlers),
+			index,titlesLength,title;
+		for(index = 0, titlesLength = titles.length; index < titlesLength; index++) {
+			title = titles[index];
 			callback(tiddlers[title],title);
 		}
-		for(var title in shadowTiddlers) {
+		titles = Object.keys(shadowTiddlers);
+		for(index = 0, titlesLength = titles.length; index < titlesLength; index++) {
+			title = titles[index];
 			if(!Object.prototype.hasOwnProperty.call(tiddlers,title)) {
 				var shadowInfo = shadowTiddlers[title];
 				callback(shadowInfo.tiddler,title);
@@ -916,7 +983,10 @@ $tw.Wiki = function(options) {
 
 	// Iterate through all the shadows and then the tiddlers
 	this.eachShadowPlusTiddlers = function(callback) {
-		for(var title in shadowTiddlers) {
+		var titles = Object.keys(shadowTiddlers),
+			index,titlesLength,title;
+		for(index = 0, titlesLength = titles.length; index < titlesLength; index++) {
+			title = titles[index];
 			if(Object.prototype.hasOwnProperty.call(tiddlers,title)) {
 				callback(tiddlers[title],title);
 			} else {
@@ -924,7 +994,9 @@ $tw.Wiki = function(options) {
 				callback(shadowInfo.tiddler,title);
 			}
 		}
-		for(var title in tiddlers) {
+		titles = Object.keys(tiddlers);
+		for(index = 0, titlesLength = titles.length; index < titlesLength; index++) {
+			title = titles[index];
 			if(!Object.prototype.hasOwnProperty.call(shadowTiddlers,title)) {
 				callback(tiddlers[title],title);
 			}
@@ -932,7 +1004,7 @@ $tw.Wiki = function(options) {
 
 	};
 
-	// Test for the existence of a tiddler
+	// Test for the existence of a tiddler (excludes shadow tiddlers)
 	this.tiddlerExists = function(title) {
 		return !!$tw.utils.hop(tiddlers,title);
 	};
@@ -1040,6 +1112,8 @@ $tw.Wiki = function(options) {
 				});
 			}
 		});
+		this.clearCache(null);
+		this.clearGlobalCache();
 	};
 
 };
@@ -1132,9 +1206,9 @@ $tw.Wiki.prototype.deserializeTiddlers = function(type,text,srcFields) {
 	srcFields = srcFields || Object.create(null);
 	var deserializer = $tw.Wiki.tiddlerDeserializerModules[type],
 		fields = Object.create(null);
-	if(!deserializer && $tw.config.fileExtensionInfo[type]) {
+	if(!deserializer && $tw.utils.getFileExtensionInfo(type)) {
 		// If we didn't find the serializer, try converting it from an extension to a content type
-		type = $tw.config.fileExtensionInfo[type].type;
+		type = $tw.utils.getFileExtensionInfo(type).type;
 		deserializer = $tw.Wiki.tiddlerDeserializerModules[type];
 	}
 	if(!deserializer && $tw.config.contentTypeInfo[type]) {
@@ -1195,15 +1269,15 @@ $tw.modules.define("$:/boot/tiddlerdeserializer/tids","tiddlerdeserializer",{
 			for(var t=0; t<lines.length; t++) {
 				var line = lines[t];
 				if(line.charAt(0) !== "#") {
-					var colonPos= line.indexOf(": ");
+					var colonPos= line.indexOf(":");
 					if(colonPos !== -1) {
 						var tiddler = $tw.utils.extend(Object.create(null),fields);
-						tiddler.title = (tiddler.title || "") + line.substr(0,colonPos);
+						tiddler.title = (tiddler.title || "") + line.substr(0,colonPos).trim();
 						if(titles.indexOf(tiddler.title) !== -1) {
 							console.log("Warning: .multids file contains multiple definitions for " + tiddler.title);
 						}
 						titles.push(tiddler.title);
-						tiddler.text = line.substr(colonPos + 2);
+						tiddler.text = line.substr(colonPos + 2).trim();
 						tiddlers.push(tiddler);
 					}
 				}
@@ -1244,10 +1318,14 @@ Decrypt any tiddlers stored within the element with the ID "encryptedArea". The 
 $tw.boot.decryptEncryptedTiddlers = function(callback) {
 	var encryptedArea = document.getElementById("encryptedStoreArea");
 	if(encryptedArea) {
-		var encryptedText = encryptedArea.innerHTML;
+		var encryptedText = encryptedArea.innerHTML,
+			prompt = "Enter a password to decrypt this TiddlyWiki";
 		// Prompt for the password
+		if($tw.utils.hop($tw.boot,"encryptionPrompts")) {
+			prompt = $tw.boot.encryptionPrompts.decrypt;
+		}
 		$tw.passwordPrompt.createPrompt({
-			serviceName: "Enter a password to decrypt this TiddlyWiki",
+			serviceName: prompt,
 			noUserName: true,
 			submitText: "Decrypt",
 			callback: function(data) {
@@ -1348,10 +1426,6 @@ $tw.loadTiddlersBrowser = function() {
 	for(var t=0; t<containerIds.length; t++) {
 		$tw.wiki.addTiddlers($tw.wiki.deserializeTiddlers("(DOM)",document.getElementById(containerIds[t])));
 	}
-	// Load any preloaded tiddlers
-	if($tw.preloadTiddlers) {
-		$tw.wiki.addTiddlers($tw.preloadTiddlers);
-	}
 };
 
 } else {
@@ -1377,7 +1451,7 @@ Load the tiddlers contained in a particular file (and optionally extract fields 
 */
 $tw.loadTiddlersFromFile = function(filepath,fields) {
 	var ext = path.extname(filepath),
-		extensionInfo = $tw.config.fileExtensionInfo[ext],
+		extensionInfo = $tw.utils.getFileExtensionInfo(ext),
 		type = extensionInfo ? extensionInfo.type : null,
 		typeInfo = type ? $tw.config.contentTypeInfo[type] : null,
 		data = fs.readFileSync(filepath,typeInfo ? typeInfo.encoding : "utf8"),
@@ -1414,18 +1488,41 @@ $tw.loadTiddlersFromPath = function(filepath,excludeRegExp) {
 			if(files.indexOf("tiddlywiki.files") !== -1) {
 				// If so, process the files it describes
 				var filesInfo = JSON.parse(fs.readFileSync(filepath + path.sep + "tiddlywiki.files","utf8"));
+				// First the tiddlers
 				$tw.utils.each(filesInfo.tiddlers,function(tidInfo) {
-					var typeInfo = $tw.config.contentTypeInfo[tidInfo.fields.type || "text/plain"],
+					var type = tidInfo.fields.type || "text/plain",
+						typeInfo = $tw.config.contentTypeInfo[type],
 						pathname = path.resolve(filepath,tidInfo.file),
 						text = fs.readFileSync(pathname,typeInfo ? typeInfo.encoding : "utf8");
-					if(tidInfo.prefix) {
-						text = tidInfo.prefix + text;
+					if(tidInfo.isTiddlerFile) {
+						var fileTiddlers = $tw.wiki.deserializeTiddlers(path.extname(pathname),text) || [];
+						$tw.utils.each(fileTiddlers,function(tiddler) {
+							$tw.utils.extend(tiddler,tidInfo.fields);
+							if(tidInfo.prefix) {
+								tiddler.text = tidInfo.prefix + tiddler.text;
+							}
+							if(tidInfo.suffix) {
+								tiddler.text = tiddler.text + tidInfo.suffix;
+							}
+						});
+						tiddlers.push({tiddlers: fileTiddlers});
+					} else {
+						if(tidInfo.prefix) {
+							text = tidInfo.prefix + text;
+						}
+						if(tidInfo.suffix) {
+							text = text + tidInfo.suffix;
+						}
+						tidInfo.fields.text = text;
+						tiddlers.push({tiddlers: [tidInfo.fields]});
 					}
-					if(tidInfo.suffix) {
-						text = text + tidInfo.suffix;
+				});
+				// Then any recursive directories
+				$tw.utils.each(filesInfo.directories,function(dirPath) {
+					var pathname = path.resolve(filepath,dirPath);
+					if(fs.existsSync(pathname) && fs.statSync(pathname).isDirectory()) {
+						tiddlers.push.apply(tiddlers,$tw.loadTiddlersFromPath(pathname,excludeRegExp));
 					}
-					tidInfo.fields.text = text;
-					tiddlers.push({tiddlers: [tidInfo.fields]});
 				});
 			} else {
 				// If not, read all the files in the directory
@@ -1527,7 +1624,11 @@ $tw.getLibraryItemSearchPaths = function(libraryPath,envVar) {
 	var pluginPaths = [path.resolve($tw.boot.corePath,libraryPath)],
 		env = process.env[envVar];
 	if(env) {
-		Array.prototype.push.apply(pluginPaths,env.split(":"));
+		env.split(path.delimiter).map(function(item) {
+			if(item) {
+				pluginPaths.push(item)
+			}
+		});
 	}
 	return pluginPaths;
 };
@@ -1548,11 +1649,14 @@ $tw.loadPlugins = function(plugins,libraryPath,envVar) {
 
 /*
 path: path of wiki directory
-parentPaths: array of parent paths that we mustn't recurse into
+options:
+	parentPaths: array of parent paths that we mustn't recurse into
+	readOnly: true if the tiddler file paths should not be retained
 */
-$tw.loadWikiTiddlers = function(wikiPath,parentPaths) {
-	parentPaths = parentPaths || [];
-	var wikiInfoPath = path.resolve(wikiPath,$tw.config.wikiInfo),
+$tw.loadWikiTiddlers = function(wikiPath,options) {
+	options = options || {};
+	var parentPaths = options.parentPaths || [],
+		wikiInfoPath = path.resolve(wikiPath,$tw.config.wikiInfo),
 		wikiInfo,
 		pluginFields;
 	// Bail if we don't have a wiki info file
@@ -1565,10 +1669,18 @@ $tw.loadWikiTiddlers = function(wikiPath,parentPaths) {
 	if(wikiInfo.includeWikis) {
 		parentPaths = parentPaths.slice(0);
 		parentPaths.push(wikiPath);
-		$tw.utils.each(wikiInfo.includeWikis,function(includedWikiPath) {
-			var resolvedIncludedWikiPath = path.resolve(wikiPath,includedWikiPath);
+		$tw.utils.each(wikiInfo.includeWikis,function(info) {
+			if(typeof info === "string") {
+				info = {path: info};
+			}
+			var resolvedIncludedWikiPath = path.resolve(wikiPath,info.path);
 			if(parentPaths.indexOf(resolvedIncludedWikiPath) === -1) {
-				$tw.loadWikiTiddlers(resolvedIncludedWikiPath,parentPaths);
+				var subWikiInfo = $tw.loadWikiTiddlers(resolvedIncludedWikiPath,{
+					parentPaths: parentPaths,
+					readOnly: info["read-only"]
+				});
+				// Merge the build targets
+				wikiInfo.build = $tw.utils.extend([],subWikiInfo.build,wikiInfo.build);
 			} else {
 				$tw.utils.error("Cannot recursively include wiki " + resolvedIncludedWikiPath);
 			}
@@ -1581,7 +1693,7 @@ $tw.loadWikiTiddlers = function(wikiPath,parentPaths) {
 	// Load the wiki files, registering them as writable
 	var resolvedWikiPath = path.resolve(wikiPath,$tw.config.wikiTiddlersSubDir);
 	$tw.utils.each($tw.loadTiddlersFromPath(resolvedWikiPath),function(tiddlerFile) {
-		if(tiddlerFile.filepath) {
+		if(!options.readOnly && tiddlerFile.filepath) {
 			$tw.utils.each(tiddlerFile.tiddlers,function(tiddler) {
 				$tw.boot.files[tiddler.title] = {
 					filepath: tiddlerFile.filepath,
@@ -1695,7 +1807,9 @@ $tw.boot.startup = function(options) {
 			themesEnvVar: "TIDDLYWIKI_THEME_PATH",
 			languagesEnvVar: "TIDDLYWIKI_LANGUAGE_PATH",
 			editionsEnvVar: "TIDDLYWIKI_EDITION_PATH"
-		}
+		},
+		log: {}, // Log flags
+		unloadTasks: []
 	});
 	if(!$tw.boot.tasks.readBrowserTiddlers) {
 		// For writable tiddler files, a hashmap of title to {filepath:,type:,hasMetaFile:}
@@ -1717,9 +1831,9 @@ $tw.boot.startup = function(options) {
 			$tw.boot.wikiPath = process.cwd();
 		}
 		// Read package info
-		$tw.packageInfo = require("../package.json");
+		$tw.packageInfo = $tw.packageInfo || require("../package.json");
 		// Check node version number
-		if($tw.utils.checkVersions($tw.packageInfo.engines.node.substr(2),process.version.substr(1))) {
+		if(!$tw.utils.checkVersions(process.version.substr(1),$tw.packageInfo.engines.node.substr(2))) {
 			$tw.utils.error("TiddlyWiki5 requires node.js version " + $tw.packageInfo.engines.node);
 		}
 	}
@@ -1736,13 +1850,20 @@ $tw.boot.startup = function(options) {
 	$tw.utils.registerFileType("application/javascript","utf8",".js");
 	$tw.utils.registerFileType("application/json","utf8",".json");
 	$tw.utils.registerFileType("application/pdf","base64",".pdf",{flags:["image"]});
+	$tw.utils.registerFileType("application/zip","base64",".zip");
 	$tw.utils.registerFileType("image/jpeg","base64",[".jpg",".jpeg"],{flags:["image"]});
 	$tw.utils.registerFileType("image/png","base64",".png",{flags:["image"]});
 	$tw.utils.registerFileType("image/gif","base64",".gif",{flags:["image"]});
 	$tw.utils.registerFileType("image/svg+xml","utf8",".svg",{flags:["image"]});
 	$tw.utils.registerFileType("image/x-icon","base64",".ico",{flags:["image"]});
 	$tw.utils.registerFileType("application/font-woff","base64",".woff");
+	$tw.utils.registerFileType("audio/ogg","base64",".ogg");
+	$tw.utils.registerFileType("video/mp4","base64",".mp4");
+	$tw.utils.registerFileType("audio/mp3","base64",".mp3");
+	$tw.utils.registerFileType("audio/mp4","base64",[".mp4",".m4a"]);
 	$tw.utils.registerFileType("text/x-markdown","utf8",[".md",".markdown"]);
+	$tw.utils.registerFileType("application/enex+xml","utf8",".enex");
+	$tw.utils.registerFileType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","base64",".xlsx");
 	// Create the wiki store for the app
 	$tw.wiki = new $tw.Wiki();
 	// Install built in tiddler fields modules
@@ -1750,11 +1871,29 @@ $tw.boot.startup = function(options) {
 	// Install the tiddler deserializer modules
 	$tw.Wiki.tiddlerDeserializerModules = Object.create(null);
 	$tw.modules.applyMethods("tiddlerdeserializer",$tw.Wiki.tiddlerDeserializerModules);
+	// Call unload handlers in the browser
+	if($tw.browser) {
+		window.onbeforeunload = function(event) {
+			event = event || {};
+			var result;
+			$tw.utils.each($tw.unloadTasks,function(task) {
+				var r = task(event);
+				if(r) {
+					result = r;
+				}
+			});
+			return result;
+		}
+	}
 	// Load tiddlers
 	if($tw.boot.tasks.readBrowserTiddlers) {
 		$tw.loadTiddlersBrowser();
 	} else {
 		$tw.loadTiddlersNode();
+	}
+	// Load any preloaded tiddlers
+	if($tw.preloadTiddlers) {
+		$tw.wiki.addTiddlers($tw.preloadTiddlers);
 	}
 	// Unpack plugin tiddlers
 	$tw.wiki.readPluginInfo();
@@ -1785,6 +1924,15 @@ $tw.boot.startup = function(options) {
 	// Repeatedly execute the next eligible task
 	$tw.boot.executeNextStartupTask();
 };
+
+/*
+Add another unload task
+*/
+$tw.addUnloadTask = function(task) {
+	if($tw.unloadTasks.indexOf(task) === -1) {
+		$tw.unloadTasks.push(task);
+	}
+}
 
 /*
 Execute the remaining eligible startup tasks
@@ -1880,6 +2028,35 @@ $tw.boot.isStartupTaskEligible = function(taskModule) {
 		}
 	}
 	return true;
+};
+
+/*
+Global Hooks mechanism which allows plugins to modify default functionality
+*/
+$tw.hooks = $tw.hooks || { names: {}};
+
+/*
+Add hooks to the  hashmap
+*/
+$tw.hooks.addHook = function(hookName,definition) {
+	if($tw.utils.hop($tw.hooks.names,hookName)) {
+		$tw.hooks.names[hookName].push(definition);
+	}
+	else {
+		$tw.hooks.names[hookName] = [definition];
+	}
+};
+
+/*
+Invoke the hook by key
+*/
+$tw.hooks.invokeHook = function(hookName, value) {
+	if($tw.utils.hop($tw.hooks.names,hookName)) {
+		for (var i = 0; i < $tw.hooks.names[hookName].length; i++) {
+			value = $tw.hooks.names[hookName][i](value);
+		}
+	}
+	return value;
 };
 
 /////////////////////////// Main boot function to decrypt tiddlers and then startup
